@@ -11,7 +11,6 @@ from torch.distributions import Categorical
 from torch.nn import Linear
 from torch.optim import Adam
 
-matplotlib.use("TkAgg")
 plt.ion()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -100,6 +99,9 @@ if __name__ == '__main__':
             rewards = []
 
             while not done:
+                if epoch % 100 == 0 and episode == 0:
+                    env.render()
+
                 action = agent.get_action(torch.FloatTensor(state))
                 next_state, reward, done, _ = env.step(action.numpy())
 
