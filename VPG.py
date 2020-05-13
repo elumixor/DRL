@@ -63,6 +63,16 @@ def running_average(arr, smoothing=0.8):
     return res
 
 
+def rewards_to_go(rewards, disounting=0.99):
+    res = [0 for _ in range(len(rewards))]
+    last = 0
+
+    for i in reversed(range(len(rewards))):
+        last = res[i] = rewards[i] + disounting * last
+
+    return res
+
+
 if __name__ == '__main__':
     env = gym.make('CartPole-v0')
 
@@ -113,7 +123,8 @@ if __name__ == '__main__':
 
             total_reward = sum(rewards)
 
-            batch_weights += [total_reward] * len(rewards)
+            # batch_weights += [total_reward] * len(rewards)
+            batch_weights += rewards_to_go(rewards)
             total_rewards.append(total_reward)
 
         agent.cuda()
