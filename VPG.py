@@ -77,7 +77,7 @@ if __name__ == '__main__':
     env = gym.make('CartPole-v0')
 
     state_size = env.observation_space.shape[0]
-    num_actions = env.action_space.n
+    num_actions = env.num_actions.n
 
     print(f"State size: {state_size}, num_actions: {num_actions}")
 
@@ -149,6 +149,9 @@ if __name__ == '__main__':
             plt.draw()
             plt.pause(0.0001)
             plt.clf()
+
+            if np.mean(total_rewards[-100:]) > 195.:
+                print(f"Solved in {len(total_rewards)} episodes")
 
     for t in range(visualizations):
         for episode in range(batch_size):
