@@ -7,21 +7,21 @@ from plotting import Plotter
 from utils import form_vocabulary, string2tensor, tensor2string
 
 
-class RNN(nn.Module):
-    def __init__(self, input_size, output_size, hidden_size):
-        super(RNN, self).__init__()
-        self.embedding = nn.Embedding(input_size, input_size)
-        self.hidden_size = hidden_size
+class Recurrent(nn.Module):
+    """
+    Recurrent layer, that remembers a state
+    """
 
-        self.Wxh = nn.Linear(input_size, hidden_size)
-        self.Whh = nn.Linear(hidden_size, hidden_size)
-        self.h = torch.zeros(hidden_size)
+    def __init__(self, input_size, output_size):
+        super().__init__()
 
-        self.decoder = nn.Linear(hidden_size, output_size)
+        self.hidden_size = output_size
 
-    def forward(self, input_seq):
-        x = self.embedding(input_seq)
+        self.Wxh = nn.Linear(input_size, output_size)
+        self.Whh = nn.Linear(output_size, output_size)
+        self.h = torch.zeros(output_size)
 
+    def forward(self, x):
         # We need to differentiate between single-item input and a batch.
         # For a batch, we have to process it sequentially: (by each sequence, which
         # in this case is a sequence of length 1, i.e. single character), because
@@ -41,33 +41,41 @@ class RNN(nn.Module):
             out = torch.tanh(self.Whh(self.h) + self.Wxh(x))
             self.h = out.detach()
 
-        out = self.decoder(out)
         return out
 
-    def predict(self, ix_string, zero_hidden=True):
-        sequence_length = ix_string.shape[0]
-        res = [None] * sequence_length
-
-        if zero_hidden:
-            self.zero_hidden()
-
-        for i in range(sequence_length):
-            # forward pass
-            sequence = ix_string[i:i + 1]  # selects a single char, but as a sequence.
-            output = self(sequence)
-
-            # construct categorical distribution and sample a character
-            output = F.softmax(torch.squeeze(output), dim=0)
-            dist = Categorical(output)
-            index = dist.sample().item()
-
-            # print the sampled character
-            res[i] = index
-
-        return torch.tensor(res)
-
-    def zero_hidden(self):
+    def zero_state(self):
         self.h = torch.zeros_like(self.h)
+
+
+class RNN(nn.Module):
+    """
+    Recurrent NN, that has a single Recurrent layer
+    """
+
+    def __init__(self, input_size, output_size, hidden_size):
+        super().__init__()
+
+        self.embedding = nn.Embedding(input_size, input_size)
+        self.recurrent = Recurrent(input_size, hidden_size)
+        self.decoder = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = self.embedding(x)
+        x = self.recurrent(x)
+        x = self.decoder(x)
+        return x
+
+    def predict(self, ix_string):
+        # Forward pass
+        output = self(ix_string)
+
+        # construct categorical distribution and sample a character
+        output = F.softmax(torch.squeeze(output), dim=-1)
+        dist = Categorical(output)
+        return dist.sample()
+
+    def zero_state(self):
+        self.recurrent.zero_state()
 
 
 # Form a vocabulary from a string "hello"
@@ -82,9 +90,9 @@ optimizer = torch.optim.Adam(rnn.parameters(), lr=0.002)
 plotter = Plotter()
 
 # training loop
-epochs = 50
+epochs = 100
 for epoch in range(epochs):
-    rnn.zero_hidden()
+    rnn.zero_state()
 
     input_seq = string2tensor("hell", char2ix)
     target_seq = string2tensor("ello", char2ix)
@@ -106,19 +114,18 @@ for epoch in range(epochs):
     print("Epoch: {0} \t Loss: {1:.8f}".format(epoch, running_loss), end='\t')
 
     # sample / generate a text sequence after every epoch
-
     test = 'hell'
     print(f'{test} -> {tensor2string(rnn.predict(string2tensor(test, char2ix)), ix2char)}', end='\t')
 
-    rnn.zero_hidden()
-
+    # Sample again, but start from 'h', and then feed the output prediction back into the network as next input
+    rnn.zero_state()
     out = 'h'
     for _ in range(4):
         print(out, end='')
-        out = rnn.predict(torch.tensor([char2ix[out]]), zero_hidden=False)
+        out = rnn.predict(torch.tensor([char2ix[out]]))
         out = tensor2string(out, ix2char)
-
     print(out)
 
+    # Show a graph displaying the current progress
     if epoch % int(epochs / 10) == 0 or epoch == epochs - 1:
         plotter.show()
