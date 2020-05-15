@@ -1,8 +1,5 @@
-import warnings
-
 import torch
 import numpy as np
-import random
 
 import gym
 import torch.nn as nn
@@ -42,9 +39,8 @@ class QNet(nn.Module):
         return x
 
 
-lr = 0.001
-
 q_net = QNet(state_shape, num_actions, 32)
+lr = 0.001
 optimizer = Adam(q_net.parameters(), lr=lr)
 
 # Test network's output on a dummy observation
@@ -149,11 +145,11 @@ for episode in range(num_episodes):
         fig, (ax0, ax1) = plt.subplots(2)
 
         ax0.set_title('Total reward for an episode')
-        ax0.plot(sum_rewards)
-        ax0.plot(running_average(sum_rewards))
+        ax0.show(sum_rewards)
+        ax0.show(running_average(sum_rewards))
 
         ax1.set_title('Epsilon')
-        ax1.plot(epsilon_history)
+        ax1.show(epsilon_history)
         plt.show()
 
     if episode % 100 == 99:

@@ -77,14 +77,14 @@ if __name__ == '__main__':
     env = gym.make('CartPole-v0')
 
     state_size = env.observation_space.shape[0]
-    num_actions = env.num_actions.n
+    num_actions = env.action_space.n
 
     print(f"State size: {state_size}, num_actions: {num_actions}")
 
     agent = PGAgent(state_size, num_actions)
 
     epochs = 2000
-    batch_size = 10
+    batch_size = 1
     visualizations = 10
 
     mean_total_rewards = []
