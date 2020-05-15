@@ -25,6 +25,13 @@ def one_hot(size, pos):
     return res
 
 
+def bootstrap(rewards, last, discount=0.99):
+    values = torch.zeros_like(rewards)
+    for i in reversed(range(len(rewards))):
+        last = values[i] = rewards[i] + discount * last
+    return values
+
+
 class Memory:
     def __init__(self, capacity):
         self.data = []
@@ -55,3 +62,24 @@ class Memory:
                           f' which is greater than the current stored number of samples: {self.size}.'
                           f' Will return a sample of size {self.size}')
         return random.sample(self.data, min(self.size, size))
+
+
+def form_vocabulary(text):
+    chars = sorted(list(set(text)))
+    data_size, vocab_size = len(text), len(chars)
+
+    # char to index and index to char maps
+    char2ix = {ch: i for i, ch in enumerate(chars)}
+    ix2char = {i: ch for i, ch in enumerate(chars)}
+    return (data_size, vocab_size), (char2ix, ix2char)
+
+
+def string2tensor(s, char2ix):
+    s = list(s)
+    for i, ch in enumerate(s):
+        s[i] = char2ix[ch]
+    return torch.tensor(s).unsqueeze(1)
+
+
+def tensor2string(t, ix2char):
+    return ''.join([ix2char[i] for i in t.flatten().tolist()])
