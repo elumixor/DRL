@@ -90,7 +90,7 @@ optimizer = torch.optim.Adam(rnn.parameters(), lr=0.002)
 plotter = Plotter()
 
 # training loop
-epochs = 100
+epochs = 50
 for epoch in range(epochs):
     rnn.zero_state()
 
@@ -114,6 +114,8 @@ for epoch in range(epochs):
     print("Epoch: {0} \t Loss: {1:.8f}".format(epoch, running_loss), end='\t')
 
     # sample / generate a text sequence after every epoch
+    rnn.zero_state()
+
     test = 'hell'
     print(f'{test} -> {tensor2string(rnn.predict(string2tensor(test, char2ix)), ix2char)}', end='\t')
 
