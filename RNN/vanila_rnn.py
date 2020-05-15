@@ -19,13 +19,8 @@ class RNN(nn.Module):
 
         self.decoder = nn.Linear(hidden_size, output_size)
 
-    def forward(self, input_seq, hidden_state=None):
+    def forward(self, input_seq):
         x = self.embedding(input_seq)
-
-        if hidden_state is None:
-            self.h = torch.zeros_like(self.h)
-        else:
-            self.h = hidden_state
 
         # We need to differentiate between single-item input and a batch.
         # For a batch, we have to process it sequentially: (by each sequence, which
@@ -47,18 +42,19 @@ class RNN(nn.Module):
             self.h = out.detach()
 
         out = self.decoder(out)
-        return out, self.h
+        return out
 
-    def predict(self, ix_string):
+    def predict(self, ix_string, zero_hidden=True):
         sequence_length = ix_string.shape[0]
         res = [None] * sequence_length
 
-        hidden_state = None
+        if zero_hidden:
+            self.zero_hidden()
 
         for i in range(sequence_length):
             # forward pass
             sequence = ix_string[i:i + 1]  # selects a single char, but as a sequence.
-            output, hidden_state = rnn.forward(sequence, hidden_state)
+            output = self(sequence)
 
             # construct categorical distribution and sample a character
             output = F.softmax(torch.squeeze(output), dim=0)
@@ -69,6 +65,9 @@ class RNN(nn.Module):
             res[i] = index
 
         return torch.tensor(res)
+
+    def zero_hidden(self):
+        self.h = torch.zeros_like(self.h)
 
 
 # Form a vocabulary from a string "hello"
@@ -85,13 +84,13 @@ plotter = Plotter()
 # training loop
 epochs = 50
 for epoch in range(epochs):
-    hidden_state = None
+    rnn.zero_hidden()
 
     input_seq = string2tensor("hell", char2ix)
     target_seq = string2tensor("ello", char2ix)
 
     # forward pass
-    output, hidden_state = rnn.forward(input_seq, hidden_state)
+    output = rnn(input_seq)
 
     # compute loss
     loss = loss_fn(torch.squeeze(output), torch.squeeze(target_seq))
@@ -107,10 +106,19 @@ for epoch in range(epochs):
     print("Epoch: {0} \t Loss: {1:.8f}".format(epoch, running_loss), end='\t')
 
     # sample / generate a text sequence after every epoch
-    hidden_state = None
 
     test = 'hell'
-    print(f'{test} -> {tensor2string(rnn.predict(string2tensor(test, char2ix)), ix2char)}')
+    print(f'{test} -> {tensor2string(rnn.predict(string2tensor(test, char2ix)), ix2char)}', end='\t')
+
+    rnn.zero_hidden()
+
+    out = 'h'
+    for _ in range(4):
+        print(out, end='')
+        out = rnn.predict(torch.tensor([char2ix[out]]), zero_hidden=False)
+        out = tensor2string(out, ix2char)
+
+    print(out)
 
     if epoch % int(epochs / 10) == 0 or epoch == epochs - 1:
         plotter.show()
