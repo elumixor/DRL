@@ -1,133 +1,131 @@
+import os
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical
-
-from plotting import Plotter
-from utils import form_vocabulary, string2tensor, tensor2string
+from utils import form_vocabulary, string2tensor, tensor2string, running_average
 
 
-class Recurrent(nn.Module):
-    """
-    Recurrent layer, that remembers a state
-    """
-
-    def __init__(self, input_size, output_size):
+class RecurrentCell(nn.Module):
+    def __init__(self, input_size, hidden_size):
         super().__init__()
-
-        self.hidden_size = output_size
-
-        self.Wxh = nn.Linear(input_size, output_size)
-        self.Whh = nn.Linear(output_size, output_size)
-        self.h = torch.zeros(output_size)
+        self.xh2h = nn.Linear(input_size + hidden_size, hidden_size)
+        self.h = torch.zeros(1, hidden_size).to(device)
 
     def forward(self, x):
-        # We need to differentiate between single-item input and a batch.
-        # For a batch, we have to process it sequentially: (by each sequence, which
-        # in this case is a sequence of length 1, i.e. single character), because
-        # the hidden state changes with each processed sequence.
-        if len(x.shape) > 2:
-            # We receive a tensor batch * sequence length * encoding size
-            # We output a tensor batch * sequence length * hidden size
-            out = torch.zeros(list(x.shape)[:-1] + [self.hidden_size])
-
-            for i, x1 in enumerate(x):
-                # Process each sequence through a memory cell
-                res = torch.tanh(self.Whh(self.h) + self.Wxh(x1))
-                self.h = res.detach()
-                out[i] = res
-        else:
-            # case with no batch - just a sequence
-            out = torch.tanh(self.Whh(self.h) + self.Wxh(x))
-            self.h = out.detach()
-
-        return out
+        self.h = self.xh2h(torch.cat((x, self.h), dim=1)).tanh()
+        return self.h
 
     def zero_state(self):
         self.h = torch.zeros_like(self.h)
 
 
 class RNN(nn.Module):
-    """
-    Recurrent NN, that has a single Recurrent layer
-    """
-
     def __init__(self, input_size, output_size, hidden_size):
         super().__init__()
 
-        self.embedding = nn.Embedding(input_size, input_size)
-        self.recurrent = Recurrent(input_size, hidden_size)
-        self.decoder = nn.Linear(hidden_size, output_size)
+        self.l1 = nn.Linear(input_size, input_size)
+        self.r1 = RecurrentCell(input_size, hidden_size)
+        self.l2 = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        x = self.embedding(x)
-        x = self.recurrent(x)
-        x = self.decoder(x)
+        x = F.relu(self.l1(x))
+        h = self.r1(x)
+        x = self.l2(h).log_softmax(dim=1)
         return x
 
-    def predict(self, ix_string):
-        # Forward pass
-        output = self(ix_string)
-
-        # construct categorical distribution and sample a character
-        output = F.softmax(torch.squeeze(output), dim=-1)
-        dist = Categorical(output)
-        return dist.sample()
-
     def zero_state(self):
-        self.recurrent.zero_state()
+        return self.r1.zero_state()
 
 
-# Form a vocabulary from a string "hello"
-(data_size, vocab_size), (char2ix, ix2char) = form_vocabulary("hello")
+text = "hello top kek vlad"
+(data_size, vocab_size), (char2ix, ix2char) = form_vocabulary(text)
+
+max_data_length = 1000
+seq_length = 6
+generated_texts = 10
+generated_length = 100
+epochs = 2000
+print_every = 25
+load_previous = False
+
+data_length = len(text) if max_data_length < 0 else min(len(text), max_data_length)
+text = text[:data_length]
+data = string2tensor(text, char2ix)
+
+seq_length = min(seq_length, data_length - 1)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # model instance
-rnn = RNN(input_size=vocab_size, output_size=vocab_size, hidden_size=128)
+rnn = RNN(input_size=vocab_size, output_size=vocab_size, hidden_size=512).to(device)
+criterion = torch.nn.NLLLoss()
+optimizer = torch.optim.Adam(rnn.parameters(), lr=0.01)
 
-loss_fn = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(rnn.parameters(), lr=0.002)
+model_path = './models/vanilla_rnn'
+models_dir_path = '/'.join(model_path.split('/')[:-1])
 
-plotter = Plotter()
+if not os.path.exists(models_dir_path):
+    os.makedirs(models_dir_path)
 
-# training loop
-epochs = 50
+if load_previous and os.path.exists(model_path):
+    print('Existing model found. Loading...')
+    checkpoint = torch.load(model_path)
+    rnn.load_state_dict(checkpoint['model'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+
+
+def sample(word_tensor, temperature):
+    letter_probabilities = (word_tensor / temperature).exp()
+    return torch.distributions.Categorical(letter_probabilities).sample()
+
+
+losses = []
+
 for epoch in range(epochs):
-    rnn.zero_state()
+    loss = 0
 
-    input_seq = string2tensor("hell", char2ix)
-    target_seq = string2tensor("ello", char2ix)
+    for p in range(data_length - seq_length - 1):
+        rnn.zero_state()
+        x_sequence = data[p:p + seq_length]
+        target_sequence = data[p + 1:p + seq_length + 1]
 
-    # forward pass
-    output = rnn(input_seq)
+        word = torch.zeros(seq_length, 1, vocab_size)
 
-    # compute loss
-    loss = loss_fn(torch.squeeze(output), torch.squeeze(target_seq))
-    running_loss = loss.item()
+        for i in range(seq_length):
+            x = x_sequence[i]
+            target = target_sequence[i]
 
-    plotter['loss'] += running_loss
+            res = torch.zeros(1, vocab_size)
+            res[0][x[0]] = 1
 
-    # compute gradients and take optimizer step
+            out = rnn(res.to(device))
+            loss += criterion(out, target.to(device))
+
+            word[i] = out.detach()
+
     optimizer.zero_grad()
+    loss = loss / (data_length - seq_length - 1)
     loss.backward()
     optimizer.step()
 
-    print("Epoch: {0} \t Loss: {1:.8f}".format(epoch, running_loss), end='\t')
+    loss = loss.item()
+    losses.append(loss)
 
-    # sample / generate a text sequence after every epoch
-    rnn.zero_state()
+    if epoch % print_every == 0:
+        print(f'Epoch:\t{epoch}\tLast running loss:\t{running_average(losses)[-1]}')
 
-    test = 'hell'
-    print(f'{test} -> {tensor2string(rnn.predict(string2tensor(test, char2ix)), ix2char)}', end='\t')
+        x = tensor2string(x_sequence, ix2char)
+        actual = tensor2string(target_sequence, ix2char)
 
-    # Sample again, but start from 'h', and then feed the output prediction back into the network as next input
-    rnn.zero_state()
-    out = 'h'
-    for _ in range(4):
-        print(out, end='')
-        out = rnn.predict(torch.tensor([char2ix[out]]))
-        out = tensor2string(out, ix2char)
-    print(out)
+        for temperature in [0.2, 0.5, 1., 1.2]:
+            predicted = tensor2string(sample(word, temperature), ix2char)
 
-    # Show a graph displaying the current progress
-    if epoch % int(epochs / 10) == 0 or epoch == epochs - 1:
-        plotter.show()
+            correct = predicted == actual
+
+            print(f'\tt: {temperature}\t{x}'
+                  f' -> {predicted} | '
+                  f'{f"({actual})" if not correct else "✓"}')
+
+        torch.save({'model': rnn.state_dict(), 'optimizer': optimizer.state_dict()}, model_path)

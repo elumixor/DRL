@@ -19,7 +19,7 @@ def running_average(arr, smoothing=0.8):
     return res
 
 
-def one_hot(size, pos):
+def one_hot(size):
     res = torch.zeros(size).float()
     res[pos] = 1.
     return res
