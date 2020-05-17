@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch.optim import Adam
 
-from utils import running_average, one_hot, Memory
+from rnn_utils import running_average, one_hot, Memory
 
 env = gym.make('CartPole-v0')
 

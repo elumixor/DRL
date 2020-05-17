@@ -10,7 +10,7 @@ from torch.optim import Adam
 from torch.autograd import Variable
 
 # Train on balancing a pole on a cart
-from utils import running_average, bootstrap
+from rnn_utils import running_average, bootstrap
 
 env = gym.make('CartPole-v0')
 

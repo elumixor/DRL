@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from utils import torch_device
+from rnn_utils import torch_device
 
 
 class RecurrentCell(nn.Module):

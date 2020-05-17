@@ -6,12 +6,9 @@ import torch.nn as nn
 from torch.nn import NLLLoss
 from torch.optim import Adam
 
-# from RNN.RecurrentCell import RecurrentCell
-from rnn_tester import generate_phrase
+from cells import *
 from plotting import Plotter
-from utils import ModelSaver, read_file_string, sample_temperature, one_hot, Vocabulary, torch_device
-from LSTMCell import LSTMCell
-from GRU import GRU
+from rnn_utils import read_file_string, Vocabulary, one_hot, generate_phrase, sample_temperature
 
 
 class Model(nn.Module):

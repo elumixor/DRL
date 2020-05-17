@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from utils import torch_device
+from rnn_utils import torch_device
 
 
 class LSTMCell(nn.Module):
