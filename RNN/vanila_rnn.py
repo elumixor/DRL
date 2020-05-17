@@ -1,24 +1,11 @@
 import os
-import random
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import form_vocabulary, string2tensor, tensor2string, running_average
 
-
-class RecurrentCell(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super().__init__()
-        self.xh2h = nn.Linear(input_size + hidden_size, hidden_size)
-        self.h = torch.zeros(1, hidden_size).to(device)
-
-    def forward(self, x):
-        self.h = self.xh2h(torch.cat((x, self.h), dim=1)).tanh()
-        return self.h
-
-    def zero_state(self):
-        self.h = torch.zeros_like(self.h)
+from RNN.RecurrentCell import RecurrentCell
+from utils import form_vocabulary, string2tensor, tensor2string, running_average, torch_device
 
 
 class RNN(nn.Module):
@@ -42,24 +29,22 @@ class RNN(nn.Module):
 text = "hello top kek vlad"
 (data_size, vocab_size), (char2ix, ix2char) = form_vocabulary(text)
 
-max_data_length = 1000
-seq_length = 6
 generated_texts = 10
 generated_length = 100
 epochs = 2000
 print_every = 25
 load_previous = False
 
+max_data_length = 1000
 data_length = len(text) if max_data_length < 0 else min(len(text), max_data_length)
 text = text[:data_length]
 data = string2tensor(text, char2ix)
 
+seq_length = 6
 seq_length = min(seq_length, data_length - 1)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 # model instance
-rnn = RNN(input_size=vocab_size, output_size=vocab_size, hidden_size=512).to(device)
+rnn = RNN(input_size=vocab_size, output_size=vocab_size, hidden_size=512).to(torch_device)
 criterion = torch.nn.NLLLoss()
 optimizer = torch.optim.Adam(rnn.parameters(), lr=0.01)
 
@@ -100,8 +85,8 @@ for epoch in range(epochs):
             res = torch.zeros(1, vocab_size)
             res[0][x[0]] = 1
 
-            out = rnn(res.to(device))
-            loss += criterion(out, target.to(device))
+            out = rnn(res.to(torch_device))
+            loss += criterion(out, target.to(torch_device))
 
             word[i] = out.detach()
 
