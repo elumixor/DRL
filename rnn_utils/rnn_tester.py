@@ -1,6 +1,7 @@
 import random
 import torch
-from rnn_utils import sample_temperature, torch_device
+from utils import torch_device
+from rnn_utils import sample_temperature
 
 
 def generate_phrase(rnn, length, voc, starting_characters=None, temperature=1.):

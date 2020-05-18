@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch.optim import Adam
 
-from rnn_utils import running_average, one_hot, Memory
+from utils import running_average, one_hot, ReplayBuffer
 
 env = gym.make('CartPole-v0')
 
@@ -20,7 +20,7 @@ print(f'Observation shape: {state_shape}. Actions number: {num_actions}')
 
 # Transform action to one-hot encoding
 def encode_action(action):
-    return one_hot(num_actions, action)
+    return one_hot(action, num_actions)
 
 
 # Create out Q predictor
@@ -41,6 +41,7 @@ class QNet(nn.Module):
 
 q_net = QNet(state_shape, num_actions, 32)
 lr = 0.001
+
 optimizer = Adam(q_net.parameters(), lr=lr)
 
 # Test network's output on a dummy observation
@@ -55,7 +56,7 @@ discount = 0.99
 
 # Create memory buffer to store memories
 memory_capacity = 1000
-mem = Memory(memory_capacity)
+mem = ReplayBuffer(memory_capacity)
 
 # We will follow epsilon-greedy policy
 epsilon = 1
@@ -145,11 +146,11 @@ for episode in range(num_episodes):
         fig, (ax0, ax1) = plt.subplots(2)
 
         ax0.set_title('Total reward for an episode')
-        ax0.show(sum_rewards)
-        ax0.show(running_average(sum_rewards))
+        ax0.plot(sum_rewards)
+        ax0.plot(running_average(sum_rewards))
 
         ax1.set_title('Epsilon')
-        ax1.show(epsilon_history)
+        ax1.plot(epsilon_history)
         plt.show()
 
     if episode % 100 == 99:

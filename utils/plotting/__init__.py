@@ -1,8 +1,8 @@
 from collections import Iterable
 
-import numpy as np
-
 import matplotlib.pyplot as plt
+
+import utils
 
 
 class Plotter:
@@ -53,17 +53,21 @@ class Plotter:
     def __len__(self):
         return len(self.entries)
 
-    def show(self, name=None, sharex=False, sharey=False):
+    def show(self, name=None, sharex=False, sharey=False, running_average=False):
         if name is None:
             if len(self) > 1:
                 fig, axs = plt.subplots(len(self), sharex=sharex, sharey=sharey)
                 # Plot all graphs
                 for i, (name, entry) in enumerate(self.entries.items()):
-                    axs[i].show(entry.x, entry.y)
+                    axs[i].plot(entry.x, entry.y)
+                    if running_average:
+                        axs[i].plot(entry.x, utils.running_average(entry.y))
                     axs[i].set_title(entry.name)
             else:
                 for name, entry in self.entries.items():
                     plt.plot(entry.y)
+                    if running_average:
+                        plt.plot(entry.x, utils.running_average(entry.y))
                     plt.title(entry.name)
 
             plt.show()
@@ -71,5 +75,7 @@ class Plotter:
             entry = self.entries[name]
             data = entry.y
             plt.plot(data)
+            if running_average:
+                plt.plot(utils.running_average(data))
             plt.title(entry.name)
             plt.show()

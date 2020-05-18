@@ -1,6 +1,6 @@
 import numpy as np
 
-from plotting import Plotter
+from utils.plotting import Plotter
 
 plotter = Plotter()
 

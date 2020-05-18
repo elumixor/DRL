@@ -7,7 +7,7 @@ from torch.nn import NLLLoss
 from torch.optim import Adam
 
 from cells import *
-from plotting import Plotter
+from utils.plotting import Plotter
 from rnn_utils import read_file_string, Vocabulary, one_hot, generate_phrase, sample_temperature
 
 
