@@ -26,7 +26,7 @@ critic = nn.Sequential(nn.Linear(obs_size, hidden_critic),
 
 # Optimizers
 optim_actor = Adam(actor.parameters(), lr=0.001)
-optim_critic = Adam(critic.parameters(), lr=0.001)
+optim_critic = Adam(critic.parameters(), lr=0.0001)
 
 discounting = 0.99
 
@@ -62,17 +62,11 @@ def train_epoch(rollouts):
     for r in rollouts:
         states, actions, rewards, next_states = zip(*r)
 
-        # Simplest strategy: use the total reward
-        # weights = [sum(rewards)] * len(rewards)
-
-        # Improvement: use discounted rewards to go
-        # weigths = rewards_to_go(rewards, discounting)
-
         # Convert to tensors
         states = torch.stack([torch.from_numpy(s) for s in states]).float().to(torch_device)
         next_states = torch.stack([torch.from_numpy(s) for s in next_states]).float().to(torch_device)
         actions = torch.LongTensor(actions).to(torch_device)
-        # weigths = torch.FloatTensor(weigths).to(torch_device)  # Improvement
+        # weights = torch.FloatTensor(weights).to(torch_device)  # Improvement
 
         # 2nd step: use advantage function, estimated by critic
         # bootstrap estimated next state values with rewards TD-1
@@ -113,4 +107,4 @@ def train_epoch(rollouts):
 
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, render=(100, 1), print_epochs=100, epochs=2000, num_rollouts=10)
+train(env, get_action, train_epoch, render_frequency=(100, 1), print_frequency=100, epochs=2000, num_trajectories=10)

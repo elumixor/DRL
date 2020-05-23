@@ -1,165 +1,150 @@
-from time import sleep
+from typing import List
 
-import torch
-import torch.nn.functional as F
 import gym
 import numpy as np
+import torch
+import torch.nn as nn
 import matplotlib
 import matplotlib.pyplot as plt
-
 from torch.distributions import Categorical
-from torch.nn import Linear
 from torch.optim import Adam
 
-plt.ion()
+from utils import conjugate_gradient, train, get_env, torch_device, rewards_to_go, jacobian, hessian, bootstrap
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Build the environment
+from utils.trainer import Rollout
 
+env, obs_shape, num_actions = get_env("CartPole-v0")
 
-class PGAgent:
-    def __init__(self, state_size, num_actions):
-        self.num_actions = num_actions
-        self.state_size = state_size
+# We will need an actor to take actions in environment,
+# and a critic, for estimating state value, and, therefore, advantage
 
-        self.l1 = Linear(state_size, 8)
-        self.l2 = Linear(8, num_actions)
+# Actor takes a state and returns actions' probabilities
+actor_hidden = 32
+actor = nn.Sequential(nn.Linear(obs_shape[0], actor_hidden),
+                      # nn.ReLU(),
+                      nn.Linear(actor_hidden, num_actions),
+                      nn.Softmax(dim=1))
 
-        self.l1.float()
-        self.l2.float()
-
-        self.optimizer = Adam(list(self.l1.parameters()) + list(self.l2.parameters()), lr=0.001)
-
-    def cpu(self):
-        self.l1.cpu()
-        self.l2.cpu()
-
-    def cuda(self):
-        self.l1.to(device)
-        self.l2.to(device)
-
-    def get_probabilities(self, state):
-        x = self.l1(state)
-        x = F.relu(x)
-        x = self.l2(x)
-        return Categorical(logits=x)
-
-    def get_action(self, state):
-        return self.get_probabilities(state).sample()
-
-    def train(self, states, actions, weights):
-        self.optimizer.zero_grad()
-        loss = (-self.get_probabilities(states).log_prob(actions) * weights).mean()
-        loss.backward()
-        self.optimizer.step()
+# Critic takes a state and returns its values
+critic_hidden = 32
+critic = nn.Sequential(nn.Linear(obs_shape[0], critic_hidden),
+                       nn.ReLU(),
+                       nn.Linear(critic_hidden, 1),
+                       nn.Softmax(dim=1))
+critic_optimizer = Adam(critic.parameters(), lr=0.001)
 
 
-def running_average(arr, smoothing=0.8):
-    res = np.zeros(len(arr))
-    res[0] = arr[0]
-
-    for i in range(1, len(arr)):
-        res[i] = res[i - 1] * smoothing + (1 - smoothing) * arr[i]
-
-    return res
-
-
-def rewards_to_go(rewards, disounting=0.99):
-    res = [0 for _ in range(len(rewards))]
-    last = 0
-
-    for i in reversed(range(len(rewards))):
-        last = res[i] = rewards[i] + disounting * last
-
-    return res
+# Critic will be updated to give more accurate advantages
+def update_critic(advantages):
+    advantages = (advantages - advantages.mean()) / advantages.std()  # Normalize to reduce skewness
+    loss = (advantages ** 2).mean()  # MSE
+    critic_optimizer.zero_grad()
+    loss.backward()
+    critic_optimizer.step()
 
 
-if __name__ == '__main__':
-    env = gym.make('CartPole-v0')
+# Actor decides what action to take
+def get_action(state: List[float]) -> int:
+    state = torch.tensor(state).float().unsqueeze(0)  # Turn it into a batch with a single element
+    probabilities = actor(state)
+    action = Categorical(probabilities).sample()
+    return action.item()
 
-    state_size = env.observation_space.shape[0]
-    num_actions = env.action_space.n
 
-    print(f"State size: {state_size}, num_actions: {num_actions}")
+def surrogate_loss(new_probabilities, old_probabilities, advantages):
+    return (new_probabilities / old_probabilities * advantages).mean()
 
-    agent = PGAgent(state_size, num_actions)
 
-    epochs = 2000
-    batch_size = 10
-    visualizations = 10
+def estimate_advantages(states, last_state, rewards):
+    values = critic(states)
+    last_value = critic(last_state.unsqueeze(0))
+    next_values = bootstrap(rewards, last_value, discounting=0.99)
+    advantages = -values + next_values
+    return advantages
 
-    mean_total_rewards = []
-    min_total_rewards = []
-    max_total_rewards = []
 
-    # Policy gradient
-    for epoch in range(epochs):
-        batch_states = []
-        batch_actions = []
-        batch_weights = []
+def kl_div(p, q):
+    p = p.detach()
+    return (p * (p / q).log()).sum()
 
-        total_rewards = []
 
-        agent.cpu()
+def flat_grad(y, x, retain_graph=False, create_graph=False):
+    if create_graph:
+        retain_graph = True
 
-        # Sample a batch of trajectories (do roll-outs)
-        for episode in range(batch_size):
-            state = env.reset()
-            done = False
+    g = torch.autograd.grad(y, x, retain_graph=retain_graph, create_graph=create_graph)
+    g = torch.cat([t.flatten() for t in g])
+    return g
 
-            rewards = []
 
-            while not done:
-                if epoch % 100 < 5 and episode == 0:
-                    env.render()
+def HVP(df, v, x):
+    return flat_grad(df @ v, x, retain_graph=True)
 
-                action = agent.get_action(torch.FloatTensor(state))
-                next_state, reward, done, _ = env.step(action.numpy())
 
-                batch_states.append(state)
-                batch_actions.append(action)
-                rewards.append(reward)
+delta = 0.025
 
-                state = next_state
 
-            total_reward = sum(rewards)
+def line_search(step, criterion, alpha=0.9, max_iterations=10):
+    i = 0
+    while not criterion((alpha ** i) * step):
+        i += 1
 
-            # batch_weights += [total_reward] * len(rewards)
-            batch_weights += rewards_to_go(rewards)
-            total_rewards.append(total_reward)
 
-        agent.cuda()
+def apply_update(grad_flattened):
+    n = 0
+    for p in actor.parameters():
+        numel = p.numel()
+        g = grad_flattened[n:n + numel].view(p.shape)
+        p += g
+        n += numel
 
-        agent.train(torch.FloatTensor(batch_states).to(device),
-                    torch.FloatTensor(batch_actions).to(device),
-                    torch.FloatTensor(batch_weights).to(device))
 
-        mean_total_rewards.append(np.mean(total_rewards))
-        min_total_rewards.append(np.min(total_rewards))
-        max_total_rewards.append(np.max(total_rewards))
+# Our main training function
+def update_agent(rollouts: List[Rollout]) -> None:
+    states = torch.cat([r.states for r in rollouts], dim=0)
+    actions = torch.cat([r.actions for r in rollouts], dim=0)
+    rewards = torch.cat([r.rewards for r in rollouts], dim=0)
+    next_states = torch.cat([r.next_states for r in rollouts], dim=0)
 
-        if epoch % 100 == 0:
-            print(f'Epoch {epoch}. Mean total reward: {np.mean(total_rewards[-100:])}')
+    # for states, actions, rewards, next_states in rollouts:
+    advantages = estimate_advantages(states, next_states[-1], rewards)
+    update_critic(advantages)
 
-            plt.plot(mean_total_rewards)
-            # plt.plot(min_total_rewards)
-            # plt.plot(max_total_rewards)
+    probabilities = actor(states)
 
-            plt.plot(running_average(mean_total_rewards, smoothing=0.9))
+    L = surrogate_loss(probabilities, probabilities.detach(), advantages)
+    KL = kl_div(probabilities, probabilities)
 
-            plt.draw()
-            plt.pause(0.0001)
-            plt.clf()
+    parameters = list(actor.parameters())
 
-            if np.mean(total_rewards[-100:]) > 195.:
-                print(f"Solved in {len(total_rewards)} episodes")
+    g = flat_grad(L, parameters, retain_graph=True)
+    d_kl = flat_grad(KL, parameters, create_graph=True)
 
-    for t in range(visualizations):
-        for episode in range(batch_size):
-            env.render()
+    def HVP(x):
+        return flat_grad(d_kl @ x, parameters, retain_graph=True)
 
-            state = env.reset()
-            done = False
-            while not done:
-                action = agent.get_action(torch.FloatTensor(state))
-                next_state, reward, done, _ = env.step(action.numpy())
-                state = next_state
+    search_dir = conjugate_gradient(HVP, g, max_iterations=10)
+    max_step = torch.sqrt(2 * delta / (g @ search_dir)) * search_dir
+
+    def criterion(current_step):
+        with torch.no_grad():
+            apply_update(current_step)
+            probabilities_new = actor(states)
+
+            L_new = surrogate_loss(probabilities_new, probabilities, advantages)
+            KL_new = kl_div(probabilities, probabilities_new)
+
+            loss_improvement = L_new - L
+
+            if loss_improvement > 0 and KL_new <= delta:
+                return True
+
+            apply_update(-current_step)
+            return False
+
+    line_search(max_step, criterion)
+
+
+# Train using our get_action() and update() functions
+train(env, get_action, update_agent, num_trajectories=10)
