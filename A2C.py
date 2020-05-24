@@ -25,14 +25,10 @@ critic = nn.Sequential(nn.Linear(obs_size, hidden_critic),
                        nn.Linear(hidden_critic, 1))
 
 # Optimizers
-optim_actor = Adam(actor.parameters(), lr=0.001)
-optim_critic = Adam(critic.parameters(), lr=0.0001)
+optim_actor = Adam(actor.parameters(), lr=0.01)
+optim_critic = Adam(critic.parameters(), lr=0.005)
 
 discounting = 0.99
-
-saver = ModelSaver({'actor': actor, 'critic': critic, 'optim_actor': optim_actor, 'optim_critic': optim_critic},
-                   './models/A2C-NoGrad')
-# saver.load(ignore_errors=True)
 
 # We need to copy optimizers' parameters, due to this issue: https://github.com/pytorch/pytorch/issues/2830
 # In case when we first created models with parameters on cpu, and then loaded them with paramters on gpu,
@@ -59,36 +55,28 @@ def train_epoch(rollouts):
     loss = 0
     total_len = 0
 
-    for r in rollouts:
-        states, actions, rewards, next_states = zip(*r)
-
-        # Convert to tensors
-        states = torch.stack([torch.from_numpy(s) for s in states]).float().to(torch_device)
-        next_states = torch.stack([torch.from_numpy(s) for s in next_states]).float().to(torch_device)
-        actions = torch.LongTensor(actions).to(torch_device)
-        # weights = torch.FloatTensor(weights).to(torch_device)  # Improvement
-
+    for states, actions, rewards, next_states in rollouts:
         # 2nd step: use advantage function, estimated by critic
         # bootstrap estimated next state values with rewards TD-1
         values = critic(states)
 
         last_state = next_states[-1].unsqueeze(0)
         last_value = critic(last_state).item()
-        next_values = torch.FloatTensor(bootstrap(rewards, last_value, discounting)).to(torch_device).unsqueeze(0)
+        next_values = bootstrap(rewards, last_value, discounting).to(torch_device)
 
         advantage = next_values - values
 
-        loss_critic = .5 * (advantage ** 2).mean()
+        loss_critic = .5 * (advantage ** 2).sum()
 
         # Get probabilities, shape (episode_length * num_actions)
         # Then select only the probabilities corresponding to sampled actions
         probabilities = actor(states)
-        probabilities = probabilities[range(states.shape[0]), actions]
-        loss_actor = (-torch.log(probabilities) * advantage).mean()
+        probabilities = probabilities[range(states.shape[0]), actions.flatten()]
+        loss_actor = (-torch.log(probabilities) * advantage).sum()
 
         # Take the weighted average (helps convergence)
-        loss += (loss_critic + loss_actor) * len(r)
-        total_len += len(r)
+        loss += loss_critic + loss_actor
+        total_len += states.shape[0]
 
     loss = loss / total_len
 
@@ -103,8 +91,6 @@ def train_epoch(rollouts):
     critic.eval()
     critic.to('cpu')
 
-    saver.save()
-
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, render_frequency=(100, 1), print_frequency=100, epochs=2000, num_trajectories=10)
+train(env, get_action, train_epoch, render_frequency=100, print_frequency=100, epochs=2000, num_trajectories=5)

@@ -122,9 +122,9 @@ def train(env,
         if epoch % print_frequency == 0:
             total_time += epochs_time
 
-        print(f'Epoch\t{epoch} \t| '
-              f'{total_time:.02f}s \t| '
-              f'Mean total reward\t{mean(plotter["reward"].y[-print_frequency:]):.4f}')
+            print(f'Epoch\t{epoch} \t| '
+                  f'{total_time:.02f}s \t| '
+                  f'Mean total reward\t{mean(plotter["reward"].y[-print_frequency:]):.4f}')
 
-        epochs_time = 0.
-        plotter.show("reward", running_average=True)
+            epochs_time = 0.
+            plotter.show("reward", running_average=True)

@@ -11,7 +11,6 @@ from utils import get_env, train, torch_device, rewards_to_go, ModelSaver, boots
 env, (obs_size,), num_actions = get_env('CartPole-v0')
 
 hidden_actor = 16
-hidden_critic = 16
 
 # Actor maps state to actions' probabilities
 actor = nn.Sequential(nn.Linear(obs_size, hidden_actor),
@@ -20,12 +19,12 @@ actor = nn.Sequential(nn.Linear(obs_size, hidden_actor),
                       nn.Softmax(dim=1))
 
 # Optimizers
-optim_actor = Adam(actor.parameters(), lr=0.001)
+optim_actor = Adam(actor.parameters(), lr=0.01)
 
 discounting = 0.99
 
-saver = ModelSaver({'actor': actor, 'optim_actor': optim_actor}, './models/VPG')
-saver.load(ignore_errors=True)
+# saver = ModelSaver({'actor': actor, 'optim_actor': optim_actor}, './models/VPG')
+# saver.load(ignore_errors=True)
 
 # We need to copy optimizers' parameters, due to this issue: https://github.com/pytorch/pytorch/issues/2830
 # In case when we first created models with parameters on cpu, and then loaded them with paramters on gpu,
@@ -50,41 +49,33 @@ def train_epoch(rollouts):
     loss = 0
     total_len = 0
 
-    for r in rollouts:
-        states, actions, rewards, _ = zip(*r)
-
+    for states, actions, rewards, _ in rollouts:
         # Simplest strategy: use the total reward
         # weights = [sum(rewards)] * len(rewards)
 
         # Improvement: use discounted rewards to go
         weights = rewards_to_go(rewards, discounting)
-
-        # Convert to tensors
-        states = torch.stack([torch.from_numpy(s) for s in states]).float().to(torch_device)
-        actions = torch.LongTensor(actions).to(torch_device)
-        weights = torch.FloatTensor(weights).to(torch_device)  # Improvement
+        # weights = (weights - weights.mean()) / weights.std()
 
         # Get probabilities, shape (episode_length * num_actions)
         # Then select only the probabilities corresponding to sampled actions
         probabilities = actor(states)
-        probabilities = probabilities[range(states.shape[0]), actions]
-        loss_actor = (-torch.log(probabilities) * weights).mean()
+        probabilities = probabilities[range(states.shape[0]), actions.flatten()]
+        loss += (-torch.log(probabilities) * weights).sum()
 
         # Take the weighted average (helps convergence)
-        loss += loss_actor * len(r)
-        total_len += len(r)
+        total_len += weights.shape[0]
 
     loss = loss / total_len
 
     optim_actor.zero_grad()
     loss.backward()
+
     optim_actor.step()
 
     actor.eval()
     actor.to('cpu')
 
-    saver.save()
-
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, render_frequency=(100, 1), print_frequency=100, epochs=2000, num_trajectories=10)
+train(env, get_action, train_epoch, render_frequency=500, print_frequency=100, epochs=2000, num_trajectories=5)
