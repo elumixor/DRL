@@ -1,4 +1,5 @@
 # For each epoch, we will play several rollouts, collect samples and train
+import random
 import time
 from collections import namedtuple
 from typing import Tuple, Optional, Callable, List, NamedTuple

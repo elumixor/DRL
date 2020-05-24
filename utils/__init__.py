@@ -101,3 +101,21 @@ def conjugate_gradient(A, b, delta=0., max_iterations=float('inf')):
 
         x = x_new
     return x
+
+    # x = torch.zeros_like(b)
+    # r = b.clone()
+    # p = b.clone()
+    #
+    # for i in range(max_iterations):
+    #     Avp = A(p)
+    #
+    #     alpha = (r @ r) / (p @ Avp)
+    #     x += alpha * p
+    #
+    #     if i == max_iterations - 1:
+    #         return x
+    #
+    #     r_new = r - alpha * Avp
+    #     beta = (r_new @ r_new) / (r @ r)
+    #     r = r_new
+    #     p = r + beta * p
