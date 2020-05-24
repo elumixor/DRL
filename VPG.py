@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.distributions import Categorical
 from torch.optim import Adam
 
-from utils import get_env, train, torch_device, rewards_to_go, ModelSaver, bootstrap
+from utils import get_env, train, torch_device, rewards_to_go, ModelSaver, bootstrap, normalize
 
 env, (obs_size,), num_actions = get_env('CartPole-v0')
 
@@ -44,24 +44,24 @@ def get_action(state):
 
 def train_epoch(rollouts):
     actor.train()
-    actor.to(torch_device)
+    # actor.to(torch_device)
 
     loss = 0
     total_len = 0
 
     for states, actions, rewards, _ in rollouts:
         # Simplest strategy: use the total reward
-        # weights = [sum(rewards)] * len(rewards)
+        # weights = sum(rewards)
 
         # Improvement: use discounted rewards to go
-        weights = rewards_to_go(rewards, discounting)
-        # weights = (weights - weights.mean()) / weights.std()
+        weights = rewards_to_go(rewards, discounting).flatten()
+        weights = normalize(weights)
 
         # Get probabilities, shape (episode_length * num_actions)
         # Then select only the probabilities corresponding to sampled actions
         probabilities = actor(states)
         probabilities = probabilities[range(states.shape[0]), actions.flatten()]
-        loss += (-torch.log(probabilities) * weights).sum()
+        loss += (-probabilities.log() * weights).sum()
 
         # Take the weighted average (helps convergence)
         total_len += weights.shape[0]
@@ -70,12 +70,11 @@ def train_epoch(rollouts):
 
     optim_actor.zero_grad()
     loss.backward()
-
     optim_actor.step()
 
     actor.eval()
-    actor.to('cpu')
+    # actor.to('cpu')
 
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, render_frequency=500, print_frequency=100, epochs=2000, num_trajectories=5)
+train(env, get_action, train_epoch, epochs=2000, num_trajectories=5, print_frequency=10, plot_frequency=50, render_frequency=500)

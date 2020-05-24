@@ -71,6 +71,10 @@ def bootstrap(rewards, last, discounting=0.99):
     return res
 
 
+def normalize(tensor):
+    return (tensor - tensor.mean()) / tensor.std()
+
+
 # Conjugate gradient algorithm (accepts tensors)
 def conjugate_gradient(A, b, delta=0., max_iterations=float('inf')):
     x = torch.zeros_like(b)

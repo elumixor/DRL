@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.distributions import Categorical
 from torch.optim import Adam
 
-from utils import get_env, train, torch_device, rewards_to_go, ModelSaver, bootstrap
+from utils import get_env, train, torch_device, rewards_to_go, ModelSaver, bootstrap, normalize
 
 env, (obs_size,), num_actions = get_env('CartPole-v0')
 
@@ -33,10 +33,10 @@ discounting = 0.99
 # We need to copy optimizers' parameters, due to this issue: https://github.com/pytorch/pytorch/issues/2830
 # In case when we first created models with parameters on cpu, and then loaded them with paramters on gpu,
 # Optimizer's weights will still be located on cpu. This will cause errors
-for state in list(optim_actor.state.values()) + list(optim_critic.state.values()):
-    for k, v in state.items():
-        if isinstance(v, torch.Tensor):
-            state[k] = v.to(torch_device)
+# for state in list(optim_actor.state.values()) + list(optim_critic.state.values()):
+#     for k, v in state.items():
+#         if isinstance(v, torch.Tensor):
+#             state[k] = v.to(torch_device)
 
 
 def get_action(state):
@@ -48,9 +48,7 @@ def get_action(state):
 
 def train_epoch(rollouts):
     actor.train()
-    actor.to(torch_device)
     critic.train()
-    critic.to(torch_device)
 
     loss = 0
     total_len = 0
@@ -62,9 +60,9 @@ def train_epoch(rollouts):
 
         last_state = next_states[-1].unsqueeze(0)
         last_value = critic(last_state).item()
-        next_values = bootstrap(rewards, last_value, discounting).to(torch_device)
+        next_values = bootstrap(rewards, last_value, discounting)
 
-        advantage = next_values - values
+        advantage = normalize(next_values - values).flatten()
 
         loss_critic = .5 * (advantage ** 2).sum()
 
@@ -87,10 +85,8 @@ def train_epoch(rollouts):
     optim_critic.step()
 
     actor.eval()
-    actor.to('cpu')
     critic.eval()
-    critic.to('cpu')
 
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, render_frequency=100, print_frequency=100, epochs=2000, num_trajectories=5)
+train(env, get_action, train_epoch, epochs=2000, num_trajectories=10, print_frequency=10, plot_frequency=50)

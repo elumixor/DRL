@@ -15,14 +15,9 @@ Rollout = NamedTuple('Rollout',
                       ('next_states', torch.Tensor)])
 
 
-def train(env,
-          get_action: Callable[[List[float]], int],
-          update_agent: Callable[[List[Rollout]], None],
-          epochs: int = 100,
-          num_trajectories: int = 1,
-          print_frequency: int = 1,
-          render_frequency: Optional[int] = None,
-          max_timesteps: int = -1):
+def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[[List[Rollout]], None],
+          epochs: int = 100, num_trajectories: int = 1, print_frequency: int = 1,
+          render_frequency: Optional[int] = None, plot_frequency: Optional[int] = None, max_timesteps: int = -1):
     """
     Generalized training function.
 
@@ -55,11 +50,13 @@ def train(env,
 
     :param max_timesteps: Maximum timesteps per trajectory. If the rollout is too long (for example, when agent performs
                           well, this will cut of the rollout, so we don't have infinitely long rollouts
+
+    :param plot_frequency: How often should the results be plotted
+
     """
     # assert
     if max_timesteps < 0:
         max_timesteps = float('inf')
-
     plotter = Plotter()
     plotter['reward'].name = "Mean total epoch reward"
 
@@ -127,4 +124,6 @@ def train(env,
                   f'Mean total reward\t{mean(plotter["reward"].y[-print_frequency:]):.4f}')
 
             epochs_time = 0.
+
+        if plot_frequency is not None and epoch % plot_frequency == 0:
             plotter.show("reward", running_average=True)
