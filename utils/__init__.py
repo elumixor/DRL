@@ -1,22 +1,14 @@
-import gym
 import numpy as np
 
 from .model_saver import ModelSaver
 from .plotting import Plotter
 from .replay_buffer import ReplayBuffer
 from .trainer import train
+from .rlagent import RLAgent
 
 import torch
 
 torch_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
-def get_env(name):
-    env = gym.make(name)
-
-    obs_shape = env.observation_space.shape
-    num_actions = env.action_space.n
-    return env, obs_shape, num_actions
 
 
 def rewards_to_go(rewards, discounting=0.99):
@@ -76,7 +68,7 @@ def normalize(tensor):
 
 
 # Conjugate gradient algorithm (accepts tensors)
-def conjugate_gradient(A, b, delta=0., max_iterations=float('inf')):
+def conjugate_gradient(A, b, delta=0., max_iterations=10):
     x = torch.zeros_like(b)
     r = b.clone()
     p = b.clone()

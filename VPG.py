@@ -1,80 +1,90 @@
 import gym
 import numpy as np
-
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
 from torch.optim import Adam
 
-from utils import get_env, train, torch_device, rewards_to_go, ModelSaver, bootstrap, normalize
-
-env, (obs_size,), num_actions = get_env('CartPole-v0')
-
-hidden_actor = 16
-
-# Actor maps state to actions' probabilities
-actor = nn.Sequential(nn.Linear(obs_size, hidden_actor),
-                      nn.ReLU(),
-                      nn.Linear(hidden_actor, num_actions),
-                      nn.Softmax(dim=1))
-
-# Optimizers
-optim_actor = Adam(actor.parameters(), lr=0.01)
-
-discounting = 0.99
-
-# saver = ModelSaver({'actor': actor, 'optim_actor': optim_actor}, './models/VPG')
-# saver.load(ignore_errors=True)
-
-# We need to copy optimizers' parameters, due to this issue: https://github.com/pytorch/pytorch/issues/2830
-# In case when we first created models with parameters on cpu, and then loaded them with paramters on gpu,
-# Optimizer's weights will still be located on cpu. This will cause errors
-for state in list(optim_actor.state.values()):
-    for k, v in state.items():
-        if isinstance(v, torch.Tensor):
-            state[k] = v.to(torch_device)
+from utils import train, torch_device, rewards_to_go, normalize, RLAgent
 
 
-def get_action(state):
-    state = torch.tensor(state).float().unsqueeze(0)
-    probabilities = actor(state)
-    action = Categorical(probabilities).sample()
-    return action.item()
+class Agent(RLAgent):
+    def __init__(self, env):
+        super().__init__(env)
 
+        obs_size = env.observation_space.shape[0]
+        num_actions = env.action_space.n
 
-def train_epoch(rollouts):
-    actor.train()
-    # actor.to(torch_device)
+        # Hyper parameters
+        hidden_actor = 16
+        self.discounting = 0.99
 
-    loss = 0
-    total_len = 0
+        # Actor maps state to actions' probabilities
+        self.actor = nn.Sequential(nn.Linear(obs_size, hidden_actor),
+                                   nn.ReLU(),
+                                   nn.Linear(hidden_actor, num_actions),
+                                   nn.Softmax(dim=1))
 
-    for states, actions, rewards, _ in rollouts:
-        # Simplest strategy: use the total reward
-        # weights = sum(rewards)
+        # Optimizers
+        self.optimizer = Adam(self.actor.parameters(), lr=0.01)
 
-        # Improvement: use discounted rewards to go
-        weights = rewards_to_go(rewards, discounting).flatten()
-        weights = normalize(weights)
+        self.rollouts = []
+        self.rollout_samples = []
 
-        # Get probabilities, shape (episode_length * num_actions)
-        # Then select only the probabilities corresponding to sampled actions
-        probabilities = actor(states)
-        probabilities = probabilities[range(states.shape[0]), actions.flatten()]
-        loss += (-probabilities.log() * weights).sum()
+    def on_trajectory_finished(self) -> None:
+        states, actions, rewards, next_states = zip(*self.rollout_samples)
 
-        # Take the weighted average (helps convergence)
-        total_len += weights.shape[0]
+        states = torch.stack([torch.from_numpy(s) for s in states]).float().to(torch_device)
+        next_states = torch.stack([torch.from_numpy(s) for s in next_states]).float().to(torch_device)
+        actions = torch.as_tensor(actions, device=torch_device).unsqueeze(1)
+        rewards = torch.as_tensor(rewards, dtype=torch.float, device=torch_device).unsqueeze(1)
 
-    loss = loss / total_len
+        self.rollouts.append((states, actions, rewards, next_states))
+        self.rollout_samples = []
 
-    optim_actor.zero_grad()
-    loss.backward()
-    optim_actor.step()
+    def save_step(self, state: np.ndarray, action: int, reward: float, next_state: np.ndarray) -> None:
+        self.rollout_samples.append((state, action, reward, next_state))
 
-    actor.eval()
-    # actor.to('cpu')
+    def get_action(self, state: np.ndarray) -> int:
+        state = torch.from_numpy(state).float().unsqueeze(0)
+        probabilities = self.actor(state)
+        action = Categorical(probabilities).sample()
+        return action.item()
+
+    def update(self) -> None:
+        self.actor.train().to(torch_device)
+
+        loss = 0
+        total_len = 0
+
+        for states, actions, rewards, _ in self.rollouts:
+            # Simplest strategy: use the total reward
+            # weights = sum(rewards)
+
+            # Improvement: use discounted rewards to go
+            weights = rewards_to_go(rewards, self.discounting).flatten()
+            weights = normalize(weights)
+
+            # Get probabilities, shape (episode_length * num_actions)
+            # Then select only the probabilities corresponding to sampled actions
+            probabilities = self.actor(states)
+            probabilities = probabilities[range(states.shape[0]), actions.flatten()]
+            loss += (-probabilities.log() * weights).sum()
+
+            # Take the weighted average (helps convergence)
+            total_len += weights.shape[0]
+
+        self.step(loss / total_len)
+        self.actor.eval().to('cpu')
+
+        self.rollouts = []
+
+    def step(self, loss: torch.Tensor) -> None:
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, epochs=2000, num_trajectories=5, print_frequency=10, plot_frequency=50, render_frequency=500)
+train(gym.make('CartPole-v0'), Agent,
+      epochs=2000, num_trajectories=5, print_frequency=10, plot_frequency=50, render_frequency=500)

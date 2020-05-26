@@ -1,24 +1,22 @@
 # For each epoch, we will play several rollouts, collect samples and train
-import random
+import math
 import time
-from collections import namedtuple
-from typing import Tuple, Optional, Callable, List, NamedTuple
+from typing import Optional, Type
 
-from numpy import mean, sum
-import torch
+from numpy import mean
 
 from utils import Plotter
-
-Rollout = NamedTuple('Rollout',
-                     [('states', torch.Tensor),
-                      ('actions', torch.Tensor),
-                      ('rewards', torch.Tensor),
-                      ('next_states', torch.Tensor)])
+from .rlagent import RLAgent
 
 
-def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[[List[Rollout]], None],
-          epochs: int = 100, num_trajectories: int = 1, print_frequency: int = 1,
-          render_frequency: Optional[int] = None, plot_frequency: Optional[int] = None, max_timesteps: int = -1):
+def train(env,
+          agent_class: Type[RLAgent],
+          epochs: int = 100,
+          num_trajectories: int = 1,
+          max_timesteps: int = -1,
+          print_frequency: int = 1,
+          render_frequency: Optional[int] = None,
+          plot_frequency: Optional[int] = None):
     """
     Generalized training function.
 
@@ -34,9 +32,7 @@ def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[
 
     :param env: OpenAI gym environment
 
-    :param get_action: Decision function for the agent, accepts a state and returns an action an agent will take
-
-    :param update_agent: Function that updates an agent at the end of an epoch. Accepts a list of trajectories
+    :param agent_class: Agent instance to be acting in the environment
 
     :param epochs: Number of epochs to train
 
@@ -55,9 +51,9 @@ def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[
     :param plot_frequency: How often should the results be plotted
 
     """
-    # assert
     if max_timesteps < 0:
-        max_timesteps = float('inf')
+        max_timesteps = math.inf
+
     plotter = Plotter()
     plotter['reward'].name = "Mean total epoch reward"
 
@@ -65,6 +61,7 @@ def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[
     epochs_time = 0.
 
     start_time = time.time()
+    agent = agent_class(env)
 
     global_rollout = 0
     for epoch in range(epochs):
@@ -72,10 +69,11 @@ def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[
         rollout_rewards = []
 
         for rollout in range(num_trajectories):
+            agent.on_trajectory_started()
+
             state = env.reset()
             done = False
 
-            samples = []
             total_reward = 0
 
             t = 0
@@ -83,33 +81,23 @@ def train(env, get_action: Callable[[List[float]], int], update_agent: Callable[
                 if render_frequency and global_rollout % render_frequency == 0:
                     env.render()
 
-                with torch.no_grad():
-                    action = get_action(state)
+                action = agent.get_action(state)
 
                 next_state, reward, done, _ = env.step(action)
 
-                samples.append((state, action, reward, next_state))
-                total_reward += reward
+                agent.save_step(state, action, reward, next_state)
 
                 state = next_state
 
                 t += 1
+                total_reward += reward
 
-            # Transpose our samples
-            states, actions, rewards, next_states = zip(*samples)
-
-            states = torch.stack([torch.from_numpy(state) for state in states], dim=0).float()
-            next_states = torch.stack([torch.from_numpy(state) for state in next_states], dim=0).float()
-            actions = torch.as_tensor(actions).unsqueeze(1)
-            rewards = torch.as_tensor(rewards).unsqueeze(1)
-
-            rollouts.append(Rollout(states, actions, rewards, next_states))
+            agent.on_trajectory_finished()
 
             rollout_rewards.append(total_reward)
-
             global_rollout += 1
 
-        update_agent(rollouts)
+        agent.update()
 
         plotter['reward'] += mean(rollout_rewards)
 

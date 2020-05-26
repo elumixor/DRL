@@ -1,16 +1,11 @@
-import random
 from typing import List
 
-import gym
-import numpy as np
 import torch
 import torch.nn as nn
-import matplotlib
-import matplotlib.pyplot as plt
-from torch.distributions import Categorical, kl_divergence, Independent, Normal
+from torch.distributions import Categorical
 from torch.optim import Adam
 
-from utils import conjugate_gradient, train, get_env, torch_device, rewards_to_go, jacobian, hessian, bootstrap, \
+from utils import conjugate_gradient, train, get_env, bootstrap, \
     normalize
 
 # Build the environment
@@ -48,60 +43,12 @@ def update_critic(advantages):
 def get_action(state: List[float]) -> int:
     state = torch.tensor(state).float().unsqueeze(0)  # Turn it into a batch with a single element
     probs = actor(state)
-    if torch.any(torch.isnan(probs)):
-        for p in actor.parameters():
-            print(p)
-    action = Categorical(probs=probs).sample()
+    action = Categorical(probs).sample()
     return action.item()
-
-
-def estimate_advantages(states, last_state, rewards):
-    values = critic(states)
-    last_value = critic(last_state.unsqueeze(0))
-    next_values = bootstrap(rewards, last_value, discounting=0.99)
-    advantages = next_values - values
-    return advantages
-
-
-def flat_grad(y, x, retain_graph=False, create_graph=False):
-    if create_graph:
-        retain_graph = True
-
-    g = torch.autograd.grad(y, x, retain_graph=retain_graph, create_graph=create_graph)
-    g = torch.cat([t.view(-1) for t in g])
-    return g
-
-
-def HVP(df, v, x):
-    return flat_grad(df @ v, x, retain_graph=True)
 
 
 delta = 0.01
 iterations = 10
-
-
-def line_search(step, criterion, alpha=0.9, max_iterations=10):
-    i = 0
-    while not criterion((alpha ** i) * step) and i < max_iterations:
-        i += 1
-
-
-def apply_update(grad_flattened):
-    n = 0
-    for p in actor.parameters():
-        numel = p.numel()
-        g = grad_flattened[n:n + numel].view(p.shape)
-        p.data += g
-        n += numel
-
-
-def surrogate_loss(new_probabilities, old_probabilities, advantages):
-    return (new_probabilities / old_probabilities * advantages).mean()
-
-
-def kl_div(p, q):
-    p = p.detach()
-    return (p * (p.log() - q.log())).sum(-1).mean()
 
 
 # Our main training function
@@ -125,15 +72,15 @@ def update_agent(rollouts: List[Rollout]) -> None:
     L = surrogate_loss(probabilities, probabilities.detach(), advantages)
     KL = kl_div(distribution, distribution)
 
-    inputs = list(actor.parameters())
+    parameters = list(actor.parameters())
 
-    g = flat_grad(L, actor.parameters(), retain_graph=True)
-    d_kl = flat_grad(KL, inputs, create_graph=True)  # Create graph, because we will call backward() on it (for HVP)
+    g = flat_grad(L, parameters, retain_graph=True)
+    d_kl = flat_grad(KL, parameters, create_graph=True)  # Create graph, because we will call backward() on it (for HVP)
 
     def HVP(v):
-        return flat_grad(d_kl @ v, inputs, retain_graph=True)
+        return flat_grad(d_kl @ v, parameters, retain_graph=True)
 
-    search_dir = conjugate_gradient(HVP, g, max_iterations=iterations)
+    search_dir = conjugate_gradient(HVP, g)
     max_length = torch.sqrt(2 * delta / (search_dir @ HVP(search_dir)))
     max_step = max_length * search_dir
 
@@ -156,7 +103,48 @@ def update_agent(rollouts: List[Rollout]) -> None:
         apply_update(-step)
         return False
 
-    line_search(max_step, criterion, max_iterations=10)
+    i = 0
+    while not criterion((0.9 ** i) * max_step) and i < 10:
+        i += 1
+
+
+def estimate_advantages(states, last_state, rewards):
+    values = critic(states)
+    last_value = critic(last_state.unsqueeze(0))
+    next_values = bootstrap(rewards, last_value, discounting=0.99)
+    advantages = next_values - values
+    return advantages
+
+
+def flat_grad(y, x, retain_graph=False, create_graph=False):
+    if create_graph:
+        retain_graph = True
+
+    g = torch.autograd.grad(y, x, retain_graph=retain_graph, create_graph=create_graph)
+    g = torch.cat([t.view(-1) for t in g])
+    return g
+
+
+def HVP(df, v, x):
+    return flat_grad(df @ v, x, retain_graph=True)
+
+
+def apply_update(grad_flattened):
+    n = 0
+    for p in actor.parameters():
+        numel = p.numel()
+        g = grad_flattened[n:n + numel].view(p.shape)
+        p.data += g
+        n += numel
+
+
+def surrogate_loss(new_probabilities, old_probabilities, advantages):
+    return (new_probabilities / old_probabilities * advantages).mean()
+
+
+def kl_div(p, q):
+    p = p.detach()
+    return (p * (p.log() - q.log())).sum(-1).mean()
 
 
 # Train using our get_action() and update() functions
