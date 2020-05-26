@@ -89,4 +89,4 @@ def train_epoch(rollouts):
 
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
-train(env, get_action, train_epoch, epochs=2000, num_trajectories=10, print_frequency=10, plot_frequency=50)
+train(env, get_action, train_epoch, epochs=2000, num_rollouts=10, print_frequency=10, plot_frequency=50)

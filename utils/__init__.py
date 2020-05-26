@@ -20,6 +20,20 @@ def rewards_to_go(rewards, discounting=0.99):
     return res
 
 
+def estimate_advantages(values, rewards):
+    """
+    Bootstraps rewards with last value and returns the difference with predicted values.
+    There should be n rewards and n+1 values (extra one for start/terminal state)
+    """
+    last_value = values[-1].unsqueeze(0)
+    next_values = bootstrap(rewards, last_value, discounting=0.99)
+    return next_values - values[:-1]
+
+
+def flatten(list_of_lists):
+    return [item for list in list_of_lists for item in list]
+
+
 def running_average(arr, smoothing=0.8):
     size = len(arr)
     res = np.zeros(size)
@@ -93,21 +107,3 @@ def conjugate_gradient(A, b, delta=0., max_iterations=10):
 
         x = x_new
     return x
-
-    # x = torch.zeros_like(b)
-    # r = b.clone()
-    # p = b.clone()
-    #
-    # for i in range(max_iterations):
-    #     Avp = A(p)
-    #
-    #     alpha = (r @ r) / (p @ Avp)
-    #     x += alpha * p
-    #
-    #     if i == max_iterations - 1:
-    #         return x
-    #
-    #     r_new = r - alpha * Avp
-    #     beta = (r_new @ r_new) / (r @ r)
-    #     r = r_new
-    #     p = r + beta * p

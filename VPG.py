@@ -87,4 +87,4 @@ class Agent(RLAgent):
 
 # Train, provide an env, function to get an action from state, and training function that accepts rollouts
 train(gym.make('CartPole-v0'), Agent,
-      epochs=2000, num_trajectories=5, print_frequency=10, plot_frequency=50, render_frequency=500)
+      epochs=2000, num_rollouts=5, print_frequency=10, plot_frequency=50, render_frequency=500)

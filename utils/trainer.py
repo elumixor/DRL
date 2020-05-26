@@ -12,7 +12,7 @@ from .rlagent import RLAgent
 def train(env,
           agent_class: Type[RLAgent],
           epochs: int = 100,
-          num_trajectories: int = 1,
+          num_rollouts: int = 1,
           max_timesteps: int = -1,
           print_frequency: int = 1,
           render_frequency: Optional[int] = None,
@@ -36,7 +36,7 @@ def train(env,
 
     :param epochs: Number of epochs to train
 
-    :param num_trajectories: Number of trajectories per epoch
+    :param num_rollouts: Number of trajectories per epoch
 
     :param print_frequency: How often will the results be printed.
                             For example, if set to 5, will print results every 5 epochs
@@ -68,11 +68,11 @@ def train(env,
         rollouts = []
         rollout_rewards = []
 
-        for rollout in range(num_trajectories):
-            agent.on_trajectory_started()
-
+        for rollout in range(num_rollouts):
             state = env.reset()
             done = False
+
+            agent.on_trajectory_started(state)
 
             total_reward = 0
 
@@ -82,12 +82,8 @@ def train(env,
                     env.render()
 
                 action = agent.get_action(state)
-
-                next_state, reward, done, _ = env.step(action)
-
-                agent.save_step(state, action, reward, next_state)
-
-                state = next_state
+                state, reward, done, _ = env.step(action)
+                agent.save_step(reward, state)
 
                 t += 1
                 total_reward += reward
