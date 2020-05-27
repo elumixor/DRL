@@ -1,34 +1,44 @@
 from collections import namedtuple
-from typing import List
+from typing import List, Tuple, Dict
 
 import gym
 import numpy as np
 import torch
 import torch.nn as nn
 from torch import optim, distributions
+from torch.distributions import Categorical
 
 from utils import RLAgent, train, torch_device, estimate_advantages, normalize, flatten
-
-Rollout = namedtuple('Rollout', ['states', 'logits', 'actions', 'rewards'])
+from utils.agents import MemoryAgent
 
 # Hyper parameters
+epochs = 10000
+num_rollouts = 10
+
 actor_hidden = 32
 critic_hidden = 32
 
-actor_lr = 0.001
-critic_lr = 0.005
+gamma = 0.99
+lam = 0.95
 
-update_iterations = 5
-epsilon = 0.02
+train_pi_iters = 50
+train_v_iters = 50
+
+epsilon = 0.2  # clip epsilon
+actor_lr = 3e-4
+critic_lr = 1e-3
+target_kl = 0.01
 
 
-def compute_loss(pi_new, pi_old, advantages):
-    ratio = torch.exp(pi_new - pi_old)
-    clipped = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
-    return -(torch.min(ratio, clipped) * advantages).mean()
+def discount_cumsum(arr, discount, last=0):
+    discounted = [0.] * len(arr)
+    for i in reversed(range(len(arr))):
+        last = discounted[i] = arr[i] + discount * last
+
+    return discounted
 
 
-class Agent(RLAgent):
+class PPOAgent(MemoryAgent):
     def __init__(self, env):
         super().__init__(env)
 
@@ -46,50 +56,50 @@ class Agent(RLAgent):
         self.opt_actor = optim.Adam(self.actor.parameters(), lr=actor_lr)
         self.opt_critic = optim.Adam(self.critic.parameters(), lr=critic_lr)
 
-        self.rollouts: List[Rollout] = []
-        self.rollout_samples = []
-
-        self.starting_state: torch.FloatTensor = None
-        self.last_state: torch.FloatTensor = None
-
-        self.last_logits: torch.FloatTensor = None
-        self.last_action: torch.LongTensor = None
-
-    @property
-    def models(self):
-        yield self.actor
-        yield self.critic
-
-    @property
-    def optimizers(self):
-        yield self.opt_actor
-        yield self.opt_critic
+        self.values = []
+        self.advantages = []
+        self.discounted = []
 
     def get_action(self, state: np.ndarray) -> int:
-        self.last_state = state
-        self.last_logits = self.actor(torch.from_numpy(state).float().unsqueeze(0))
-        dist = distributions.Categorical(logits=self.last_logits)
-        self.last_action = dist.sample()
-        return self.last_action.item()
+        return Categorical(logits=self.actor(torch.from_numpy(state).float().unsqueeze(0))).sample().item()
 
-    def save_step(self, reward: float, next_state: np.ndarray) -> None:
-        self.rollout_samples.append((self.last_logits, self.last_action, reward, next_state))
-
-    def on_trajectory_started(self, state: np.ndarray) -> None:
-        self.starting_state = torch.from_numpy(state).float().to(torch_device)
+    def save_step(self, action: int, reward: float, next_state: np.ndarray) -> None:
+        super().save_step(action, reward, next_state)
 
     def on_trajectory_finished(self) -> None:
-        logits, actions, rewards, next_states = zip(*self.rollout_samples)
+        # estimate advantages and value targets
+        rewards = self.current_rewards
+        states = torch.as_tensor(self.current_states).float()
+        values = self.critic(states).flatten().tolist()
 
-        states = torch.stack([self.starting_state]
-                             + [torch.from_numpy(s).float() for s in next_states]).to(torch_device)
+        # GAE
+        deltas = [rewards[i] + gamma * values[i] - values[i] for i in range(len(rewards))]
+        advantages = discount_cumsum(deltas, gamma * lam)
 
-        logits = torch.stack(logits).squeeze(1).to(torch_device)
-        actions = torch.as_tensor(actions, device=torch_device).unsqueeze(1)
-        rewards = torch.as_tensor(rewards, dtype=torch.float, device=torch_device).unsqueeze(1)
+        # Rewards-to-go
+        discounted = discount_cumsum(self.current_rewards, gamma)
 
-        self.rollouts.append(Rollout(states, logits, actions, rewards))
-        self.rollout_samples = []
+        self.values += values
+        self.advantages += advantages
+        self.discounted += discounted
+
+        super().on_trajectory_finished()
+
+    def reset_memory(self):
+        super().reset_memory()
+
+        self.values = []
+        self.advantages = []
+        self.discounted = []
+
+    @property
+    def tensored_data(self) -> Dict[str, torch.Tensor]:
+        values = torch.as_tensor(self.values, dtype=torch.float)
+        advantages = normalize(torch.as_tensor(self.advantages, dtype=torch.float))
+        discounted = torch.as_tensor(self.discounted, dtype=torch.float)
+
+        return {**super().tensored_data,
+                'values': values, 'advantages': advantages, 'discounted': discounted}
 
     def update_critic(self, advantages):
         loss = .5 * (advantages ** 2).mean()  # MSE
@@ -97,35 +107,53 @@ class Agent(RLAgent):
         loss.backward()
         self.opt_critic.step()
 
+    def model(self, state):
+        dist = distributions.Categorical(logits=self.actor(state))
+        value = self.critic(state).squeeze(1)
+        return dist, value
+
     def update(self) -> None:
-        states = torch.cat([r.states[:-1] for r in self.rollouts], dim=0)
-        actions = torch.cat([r.actions for r in self.rollouts], dim=0).flatten()
-        logits = torch.cat([r.logits for r in self.rollouts], dim=0)
+        self.actor.to(torch_device)
+        self.critic.to(torch_device)
 
-        advantages = []
-        for s, _, _, rewards in self.rollouts:
-            values = self.critic(s)
-            advantages.append(estimate_advantages(values, rewards))  # Append rollout advantages
+        data = self.tensored_data
+        for t in data.values():
+            assert not t.requires_grad  # all of these tensors are treated as constants!
 
-        advantages = normalize(torch.cat(advantages))
+        data = {k: v.to(torch_device) for k, v in data.items()}
 
-        self.update_critic(advantages)
+        actions = data['actions']
+        states = data['states']
+        advantages = data['advantages']
 
-        advantages = advantages.detach()
+        logits_old = Categorical(logits=self.actor(states)).log_prob(actions).detach()  # constant!
 
-        pi_old = distributions.Categorical(logits).log_prob(actions).detach()
+        for i in range(train_pi_iters):
+            logits = Categorical(logits=self.actor(states)).log_prob(actions)
 
-        for _ in range(update_iterations):
-            logits = self.actor(states)
-            pi_new = distributions.Categorical(logits).log_prob(actions)
+            ratio = (logits - logits_old).exp()
+            clipped = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
 
-            loss = compute_loss(pi_new, pi_old, advantages)
+            loss = -(torch.min(ratio, clipped) * advantages).mean()
+            kl = (logits_old - logits).mean().item()
+
+            if kl > target_kl:  # Early stopping
+                break
 
             self.opt_actor.zero_grad()
             loss.backward()
             self.opt_actor.step()
 
-        self.rollouts = []
+        for _ in range(train_v_iters):
+            loss = ((self.critic(data['states']) - data['discounted']) ** 2).mean()
+            self.opt_critic.zero_grad()
+            loss.backward()
+            self.opt_critic.step()
+
+        self.reset_memory()
+
+        self.actor.to('cpu')
+        self.critic.to('cpu')
 
 
-train(gym.make('CartPole-v0'), Agent, num_rollouts=5)
+train(gym.make('CartPole-v0'), PPOAgent, epochs=epochs, num_rollouts=num_rollouts)

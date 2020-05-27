@@ -4,7 +4,7 @@ from .model_saver import ModelSaver
 from .plotting import Plotter
 from .replay_buffer import ReplayBuffer
 from .trainer import train
-from .rlagent import RLAgent
+from .agents import RLAgent
 
 import torch
 

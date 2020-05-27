@@ -6,7 +6,7 @@ from typing import Optional, Type
 from numpy import mean
 
 from utils import Plotter
-from .rlagent import RLAgent
+from .agents import RLAgent
 
 
 def train(env,
@@ -16,7 +16,8 @@ def train(env,
           max_timesteps: int = -1,
           print_frequency: int = 1,
           render_frequency: Optional[int] = None,
-          plot_frequency: Optional[int] = None):
+          plot_frequency: Optional[int] = None,
+          seed: Optional[int] = None):
     """
     Generalized training function.
 
@@ -54,6 +55,9 @@ def train(env,
     if max_timesteps < 0:
         max_timesteps = math.inf
 
+    if seed is not None:
+        env.seed(seed)
+
     plotter = Plotter()
     plotter['reward'].name = "Mean total epoch reward"
 
@@ -83,7 +87,7 @@ def train(env,
 
                 action = agent.get_action(state)
                 state, reward, done, _ = env.step(action)
-                agent.save_step(reward, state)
+                agent.save_step(action, reward, state)
 
                 t += 1
                 total_reward += reward
