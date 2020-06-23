@@ -1,4 +1,4 @@
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Union
 
 import numpy as np
 import torch
@@ -16,7 +16,7 @@ class RLAgent:
     def on_trajectory_finished(self):
         pass
 
-    def get_action(self, state: State) -> int:
+    def get_action(self, state: State) -> Union[int, float]:
         raise NotImplementedError
 
     def save_step(self, action: int, reward: float, next_state: State):

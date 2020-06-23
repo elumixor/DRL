@@ -113,3 +113,6 @@ def update_network(optimizer, loss):
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+
+
+
