@@ -216,4 +216,4 @@ for epoch in range(epochs):
     if epoch % 5 == 0:
         plotter.show()
 
-    saver.save()
+    saver.push()

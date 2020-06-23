@@ -107,3 +107,9 @@ def conjugate_gradient(A, b, delta=0., max_iterations=10):
 
         x = x_new
     return x
+
+
+def update_network(optimizer, loss):
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
