@@ -15,6 +15,7 @@ def train(env,
           num_rollouts: int = 1,
           max_timesteps: int = -1,
           print_frequency: int = 1,
+          tests: int = None,
           render_frequency: Optional[int] = None,
           plot_frequency: Optional[int] = None,
           seed: Optional[int] = None):
@@ -51,6 +52,9 @@ def train(env,
 
     :param plot_frequency: How often should the results be plotted
 
+    :param tests: How many test should run on the trained model, or None
+
+    :param seed: Custom seed, or None
     """
     if max_timesteps < 0:
         max_timesteps = math.inf
@@ -116,3 +120,23 @@ def train(env,
 
         if plot_frequency is not None and epoch % plot_frequency == 0:
             plotter.show("reward", running_average=True)
+
+    # Display the performance of the trained model for several times
+    if tests is not None:
+        agent.evaluate()
+        for t in range(tests):
+            state = env.reset()
+
+            total_reward = 0
+            step = 0
+            while step < max_timesteps:
+                env.render()
+
+                action = agent.get_action(state)
+                state, reward, done, _ = env.step(action)
+                total_reward += reward
+                step += 1
+                if done:
+                    break
+
+            print(f'Test {t}: total reward: {total_reward}')

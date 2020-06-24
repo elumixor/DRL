@@ -115,4 +115,9 @@ def update_network(optimizer, loss):
     optimizer.step()
 
 
-
+def polyak(target, source, factor=.99):
+    """In-place polyak averaging, that copies source network's parameters to a target"""
+    with torch.no_grad():
+        for p_target, p in zip(target.parameters(), source.parameters()):
+            p_target.mul_(factor)
+            p_target.add_((1 - factor) * p)

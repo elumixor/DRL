@@ -31,10 +31,12 @@ class Agent(RLAgent):
         obs_size = env.observation_space.shape[0]
         action_size = env.action_space.shape[0]
 
-        action_low = torch.from_numpy(env.action_space.low).float()
-        action_high = torch.from_numpy(env.action_space.high).float()
+        self.action_low = torch.from_numpy(env.action_space.low).float()
+        self.action_high = torch.from_numpy(env.action_space.high).float()
 
         self.buffer = deque(maxlen=buffer_size)
+
+        self.noise_scale = noise_scale
 
         # Create two networks: one for the Q value function, another - to select continuous actions given the state
 
@@ -53,22 +55,24 @@ class Agent(RLAgent):
                 return x
 
         class Policy(nn.Module):
-            def __init__(self):
+            def __init__(self, action_low, action_high):
                 super().__init__()
                 self.l1 = nn.Linear(obs_size, hidden_size)
                 self.l2 = nn.Linear(hidden_size, hidden_size)
                 self.l3 = nn.Linear(hidden_size, action_size)
+                self.action_low = action_low
+                self.action_high = action_high
 
             def forward(self, state):
                 x = self.l1(state).relu()
                 x = self.l2(x).relu()
                 x = self.l3(x)
-                x = x.tanh() * (action_high - action_low) + action_low  # rescale
+                x = x.tanh() * (self.action_high - self.action_low) + self.action_low  # rescale
                 return x
 
         # Instantiate networks
         self.q = QNet()
-        self.pi = Policy()
+        self.pi = Policy(self.action_low, self.action_high)
 
         # Create target networks
         self.q_target = deepcopy(self.q)
@@ -93,20 +97,16 @@ class Agent(RLAgent):
         # Store next state as a current state
         self.state = next_state
 
-        # We will update after every single step, if the buffer is full
+        # Update is called at the end of the trajectory, we want to update at every single step, if the buffer is full
         if len(self.buffer) >= sample_size:
             self.train()
 
     def get_action(self, state: State) -> Union[int, float]:
         state = torch.from_numpy(state).unsqueeze(0).float()
         action = self.pi(state)
-        action = action + noise_scale * torch.randn_like(action)  # Apply zero-mean normal noise
+        action = action + self.noise_scale * torch.randn_like(action)  # Apply zero-mean normal noise
+        action = torch.clamp(action, self.action_low.item(), self.action_high.item())
         return action.detach().squeeze(0).numpy()
-
-    def update(self) -> None:
-        # Update is called at the end of the trajectory, we want to update at every single step
-        # We still need to implement it to prevent NotImplementedError from being thrown
-        pass
 
     def train(self):
         states, actions, rewards, next_states = zip(*random.choices(self.buffer, k=sample_size))
@@ -132,7 +132,7 @@ class Agent(RLAgent):
         loss_q.backward()
         self.optim_q.step()
 
-        # Copy to the traget networks
+        # Copy to the target networks
         with torch.no_grad():
             # Copy to the targets networks
             for p_target, p in zip(self.pi_target.parameters(), self.pi.parameters()):
@@ -143,5 +143,8 @@ class Agent(RLAgent):
                 p_target.mul_(polyak_factor)
                 p_target.add_((1 - polyak_factor) * p)
 
+    def evaluate(self):
+        self.noise_scale = 0
 
-train(gym.make('Pendulum-v0'), Agent, plot_frequency=10)
+
+train(gym.make('Pendulum-v0'), Agent, plot_frequency=10, tests=5)

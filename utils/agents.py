@@ -8,7 +8,7 @@ State = np.ndarray
 
 class RLAgent:
     def __init__(self, env):
-        pass
+        self.env = env
 
     def on_trajectory_started(self, state: State):
         pass
@@ -22,8 +22,11 @@ class RLAgent:
     def save_step(self, action: int, reward: float, next_state: State):
         pass
 
+    def evaluate(self):
+        pass
+
     def update(self) -> None:
-        raise NotImplementedError
+        pass
 
 
 class MemoryAgent(RLAgent):
